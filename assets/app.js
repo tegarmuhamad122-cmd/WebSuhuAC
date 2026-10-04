@@ -501,13 +501,6 @@ function rapikanAlamat(teks) {
   const tanpaSkema =
     s.replace(/^https?:\/\//i, '');
 
-  if (
-    tanpaSkema &&
-    !/:\d+$/.test(tanpaSkema)
-  ) {
-    s += ':8080';
-  }
-
   return s;
 }
 
