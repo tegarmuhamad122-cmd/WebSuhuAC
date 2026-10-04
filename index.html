@@ -1,0 +1,267 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Simulasi Monitoring Suhu AC &amp; Remote Control</title>
+<link rel="stylesheet" href="assets/style.css">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>%E2%9D%84%EF%B8%8F</text></svg>">
+</head>
+<body>
+
+<!-- ============================== HEADER ============================== -->
+<header class="topbar">
+  <div class="brand">
+    <div class="brand-icon">❄️</div>
+    <div>
+      <h1>Simulasi Monitoring Suhu AC</h1>
+      <p class="brand-sub">AC 1 PK &middot; Ruang Tamu &middot; <span class="tag-sim">MODE SIMULASI</span></p>
+    </div>
+  </div>
+
+  <div class="topbar-right">
+    <div class="status net-badge" id="netBadge" data-state="local">
+      <span class="dot"></span>
+      <span id="netText">Mode lokal</span>
+    </div>
+    <div class="clock-box">
+      <span class="clock-label">Waktu simulasi</span>
+      <b id="clock">20:00:00</b>
+    </div>
+    <div class="status" id="statusBadge" data-state="off">
+      <span class="dot"></span>
+      <span id="statusText">AC MATI</span>
+    </div>
+    <button class="btn btn-power" id="btnPowerMain" type="button">
+      <span class="bp-icon">⏻</span><span id="btnPowerLabel">Nyalakan AC</span>
+    </button>
+  </div>
+</header>
+
+<!-- ================ PERINGATAN SAMBUNGAN KE SERVER ================ -->
+<section class="net-banner" id="netBanner" hidden>
+  <span class="nb-icon">⚠</span>
+  <div class="nb-text">
+    <b id="nbTitle">Tidak tersambung ke server</b>
+    <span id="nbDesc"></span>
+  </div>
+  <div class="nb-actions">
+    <input type="text" id="nbInput" spellcheck="false" autocomplete="off" placeholder="192.168.1.2:8080">
+    <button class="btn" id="nbConnect" type="button">Sambungkan</button>
+    <button class="btn" id="nbRetry" type="button">Cari otomatis</button>
+    <button class="btn btn-ghost" id="nbClose" type="button">Tutup</button>
+  </div>
+</section>
+
+<main class="layout">
+
+  <!-- ========================= MONITORING ========================= -->
+  <section class="card card-monitor area-monitor">
+    <header class="card-head">
+      <h2>Monitoring Ruangan</h2>
+      <div class="chips">
+        <span class="chip" id="chipComp">Kompresor: MATI</span>
+        <span class="chip chip-live" id="chipTrend">Stabil</span>
+      </div>
+    </header>
+
+    <div class="readout">
+      <div class="readout-main">
+        <div class="ro-label">Suhu Ruangan</div>
+        <div class="ro-value"><span id="roomTemp">30.0</span><small>°C</small></div>
+        <div class="ro-sub" id="roomSub">Target 24.0 °C &middot; selisih 6.0 °C</div>
+        <div class="ro-state" id="roomState" data-state="off">AC dalam keadaan mati</div>
+      </div>
+
+      <div class="stats">
+        <div class="stat"><span>Set Point</span><b id="stSet">24.0 °C</b></div>
+        <div class="stat"><span>Suhu Luar</span><b id="stOut">32.0 °C</b></div>
+        <div class="stat"><span>Kelembapan</span><b id="stHum">66 %</b></div>
+        <div class="stat"><span>Daya</span><b id="stPower">2 W</b></div>
+        <div class="stat"><span>Energi</span><b id="stEnergy">0.000 kWh</b></div>
+        <div class="stat"><span>Biaya</span><b id="stCost">Rp 0</b></div>
+      </div>
+    </div>
+
+    <div class="chart-box">
+      <canvas id="chart" aria-label="Grafik riwayat suhu ruangan"></canvas>
+    </div>
+    <div class="chart-legend">
+      <span class="lg"><i class="lg-line lg-room"></i>Suhu ruangan</span>
+      <span class="lg"><i class="lg-line lg-set"></i>Set point</span>
+      <span class="lg"><i class="lg-block"></i>Kompresor menyala</span>
+      <span class="lg-right">Jendela waktu sampai 10 menit simulasi</span>
+    </div>
+
+    <div class="bars">
+      <div class="bar-item">
+        <div class="bar-top"><span>Progres menuju target</span><b id="barProgVal">0 %</b></div>
+        <div class="bar"><i id="barProg" class="bar-cool"></i></div>
+      </div>
+      <div class="bar-item">
+        <div class="bar-top"><span>Beban daya kompresor</span><b id="barPowerVal">0 %</b></div>
+        <div class="bar"><i id="barPower" class="bar-power"></i></div>
+      </div>
+      <div class="bar-item">
+        <div class="bar-top"><span>Kelembapan ruangan</span><b id="barHumVal">66 %</b></div>
+        <div class="bar"><i id="barHum" class="bar-hum"></i></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ========================== REMOTE ========================== -->
+  <section class="card card-remote area-remote">
+    <header class="card-head">
+      <h2>Remote Control</h2>
+      <span class="chip" id="chipRemote">Siaga</span>
+    </header>
+
+    <div class="remote">
+      <div class="remote-brand">AC&#8209;SIM <span>INVERTER</span></div>
+
+      <div class="remote-screen" id="remoteScreen">
+        <div class="rs-line">
+          <span class="rs-power" id="rsPower">OFF</span>
+          <span class="rs-clock" id="rsClock">20:00</span>
+        </div>
+        <div class="rs-temp" id="rsTempBox"><span id="rsTemp">--</span><sup>°C</sup></div>
+        <div class="rs-line rs-meta">
+          <span id="rsMode">COOL</span><span id="rsFan">FAN AUTO</span>
+        </div>
+        <div class="rs-line rs-meta">
+          <span id="rsSwing">SWING OFF</span><span id="rsTimer">TIMER OFF</span>
+        </div>
+        <div class="rs-flags">
+          <span class="flag" id="rsTurbo">TURBO</span>
+          <span class="flag" id="rsSleep">SLEEP</span>
+        </div>
+      </div>
+
+      <div class="remote-pad">
+        <button class="rbtn rbtn-power" data-act="power" type="button"><i>⏻</i><span>POWER</span></button>
+        <button class="rbtn" data-act="tempUp"   type="button"><i>▲</i><span>Suhu +</span></button>
+        <button class="rbtn" data-act="tempDown" type="button"><i>▼</i><span>Suhu −</span></button>
+        <button class="rbtn" data-act="mode"     type="button"><i>❄</i><span>MODE</span></button>
+        <button class="rbtn" data-act="fan"      type="button"><i>✵</i><span>FAN</span></button>
+        <button class="rbtn" data-act="swing"    type="button"><i>↕</i><span>SWING</span></button>
+        <button class="rbtn" data-act="turbo"    type="button"><i>⚡</i><span>TURBO</span></button>
+        <button class="rbtn" data-act="sleep"    type="button"><i>☾</i><span>SLEEP</span></button>
+        <button class="rbtn" data-act="timer"    type="button"><i>⏱</i><span>TIMER</span></button>
+        <button class="rbtn rbtn-wide" data-act="reset" type="button"><i>↺</i><span>RESET SEMUA</span></button>
+      </div>
+
+      <p class="remote-hint">
+        Pintasan: <kbd>P</kbd> power &middot; <kbd>↑</kbd><kbd>↓</kbd> suhu &middot; <kbd>M</kbd> mode &middot;
+        <kbd>F</kbd> fan &middot; <kbd>S</kbd> swing &middot; <kbd>T</kbd> turbo
+      </p>
+    </div>
+  </section>
+
+  <!-- =========================== UNIT =========================== -->
+  <section class="card card-unit area-unit">
+    <header class="card-head">
+      <h2>Unit AC</h2>
+      <span class="chip" id="chipUnit">Standby</span>
+    </header>
+
+    <div class="unit-stage">
+      <div class="ac-indoor" id="acIndoor">
+        <div class="indoor-top">
+          <span class="indoor-brand">AC&#8209;SIM</span>
+          <span class="indoor-led" id="acLed"></span>
+        </div>
+        <div class="indoor-display" id="indoorDisplay"><span>24</span></div>
+        <div class="indoor-vent"></div>
+        <div class="indoor-louver" id="acLouver"></div>
+        <div class="airflow" id="airflow"><i></i><i></i><i></i><i></i><i></i><i></i></div>
+      </div>
+
+      <div class="ac-outdoor" id="acOutdoor">
+        <div class="out-fan" id="outFan">
+          <div class="blades"><i></i><i></i><i></i></div>
+          <div class="hub"></div>
+        </div>
+        <div class="out-grille"></div>
+        <div class="out-label">UNIT LUAR</div>
+      </div>
+    </div>
+
+    <div class="unit-meta">
+      <div class="um-row"><span>Status</span><b id="umStatus">Mati</b></div>
+      <div class="um-row"><span>Kompresor</span><b id="umComp">OFF</b></div>
+      <div class="um-row"><span>Mode</span><b id="umMode">COOL</b></div>
+      <div class="um-row"><span>Kipas</span><b id="umFan">AUTO</b></div>
+      <div class="um-row"><span>Swing</span><b id="umSwing">Nonaktif</b></div>
+      <div class="um-row"><span>Timer</span><b id="umTimer">Tidak aktif</b></div>
+    </div>
+  </section>
+
+  <!-- ============================ LOG ============================ -->
+  <section class="card card-log area-log">
+    <header class="card-head">
+      <h2>Log Kejadian</h2>
+      <button class="btn btn-mini" id="btnClearLog" type="button">Bersihkan</button>
+    </header>
+    <ul class="log" id="logList">
+      <li class="log-empty">Belum ada kejadian.</li>
+    </ul>
+  </section>
+
+  <!-- ========================= PENGATURAN ========================= -->
+  <section class="card card-settings area-settings">
+    <header class="card-head">
+      <h2>Pengaturan Simulasi</h2>
+      <button class="btn btn-mini" id="btnResetAll" type="button">Reset</button>
+    </header>
+
+    <div class="settings-grid">
+      <label class="set-field">
+        <span>Suhu luar ruangan <b id="valOutdoor">32.0 °C</b></span>
+        <input type="range" id="rngOutdoor" min="24" max="45" step="0.5" value="32">
+      </label>
+
+      <label class="set-field">
+        <span>Kelembapan luar <b id="valHumOut">68 %</b></span>
+        <input type="range" id="rngHumOut" min="30" max="95" step="1" value="68">
+      </label>
+
+      <label class="set-field">
+        <span>Kecepatan simulasi</span>
+        <select id="selSpeed">
+          <option value="1">1&times; — real time</option>
+          <option value="5" selected>5&times; — cepat</option>
+          <option value="15">15&times; — sangat cepat</option>
+          <option value="60">60&times; — 1 menit = 1 jam</option>
+        </select>
+      </label>
+
+      <label class="set-field">
+        <span>Tarif listrik (Rp/kWh)</span>
+        <input type="number" id="inpTariff" min="100" max="5000" step="10" value="1444.7">
+      </label>
+
+      <div class="set-actions">
+        <button class="btn" id="btnFF" type="button">⏩ Maju 30 menit</button>
+        <button class="btn" id="btnPause" type="button">⏸ Jeda simulasi</button>
+      </div>
+
+      <p class="set-note">
+        Model termal: suhu ruangan bergerak eksponensial menuju set point saat kompresor menyala,
+        dan kembali menuju suhu luar saat AC mati. Kompresor bekerja dengan histeresis ±0,35&nbsp;°C
+        agar menyerupai AC inverter.
+      </p>
+    </div>
+  </section>
+
+</main>
+
+<footer class="footer">
+  <span>Simulasi edukasi &mdash; seluruh angka dihitung dari model matematis, bukan pembacaan sensor fisik.</span>
+  <span class="footer-hint">Tanpa server: simulasi jalan sendiri &middot; Dengan <code>server.py</code>: HP dan PC berbagi satu simulasi yang sama.</span>
+</footer>
+
+<div class="toast" id="toast" hidden></div>
+
+<script src="assets/app.js"></script>
+</body>
+</html>
