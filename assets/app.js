@@ -133,7 +133,7 @@ const MQTT_CONFIG = {
   port: 8084,
 
   username: 'WehSuhuAC',
-  password: 'persija122',
+  password: 'Jakarta1928',
 
   topics: {
     control: 'ac/control',
