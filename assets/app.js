@@ -107,7 +107,7 @@ const TIMER_TEXT = {
 
 const HYST = 0.35;
 const SLEEP_DELAY = 3600;
-const ESP32_TEMPERATURE_MAX_AGE_MS = 12000;
+const ESP32_TEMPERATURE_MAX_AGE_MS = 25000;
 
 
 /* =====================================================================
@@ -132,8 +132,8 @@ const MQTT_CONFIG = {
   host: 'h212d01c.ala.us-east-1.emqxsl.com',
   port: 8084,
 
-  username: 'WebSuhuAC',
-  password: 'Jakarta1928',
+  username: 'tegarrm',
+  password: 'persija122',
 
   topics: {
     control: 'ac/control',
@@ -141,7 +141,12 @@ const MQTT_CONFIG = {
     temperature: 'ac/temperature',
     target: 'ac/target',
     mode: 'ac/mode',
-    fan: 'ac/fan'
+    fan: 'ac/fan',
+    swing: 'ac/swing',
+    turbo: 'ac/turbo',
+    sleep: 'ac/sleep',
+    timer: 'ac/timer',
+    timerRemaining: 'ac/timer_remaining'
   },
 
   reconnectPeriod: 5000,
@@ -164,6 +169,7 @@ const MQTT = {
   lastTemperature: null,
   lastTarget: null,
   lastMode: null,
+  esp32TimerRemaining: 0,
 
   lastMessageAt: 0,
 
@@ -451,6 +457,12 @@ const NET = {
   online: false,
 
   pending: false,
+
+  actionPending: 0,
+
+  stateRevision: 0,
+
+  actionQueue: Promise.resolve(),
 
   lastPoll: 0,
 
@@ -1160,6 +1172,7 @@ function syncSettingInputs() {
 
 async function pollServer() {
   NET.pending = true;
+  const revision = NET.stateRevision;
 
   try {
     const st =
@@ -1169,11 +1182,17 @@ async function pollServer() {
         4000
       );
 
-    if (st && st.ok) {
+    if (
+      st &&
+      st.ok &&
+      revision === NET.stateRevision &&
+      NET.actionPending === 0
+    ) {
       applyState(st);
 
       NET.online = true;
       NET.fail = 0;
+      render();
     }
 
   } catch (e) {
@@ -1214,10 +1233,9 @@ async function pollServer() {
  * ===================================================================== */
 
 function doAction(name) {
-  if (NET.mode !== 'server') {
-    const fn =
-      ACTIONS[name];
+  const fn = ACTIONS[name];
 
+  if (NET.mode !== 'server') {
     if (fn) {
       fn();
     }
@@ -1227,35 +1245,71 @@ function doAction(name) {
     return;
   }
 
-  apiPost(
-    '/api/action',
-    {
-      action: name
-    }
-  )
-    .then(st => {
-      if (st && st.ok) {
-        applyState(st);
+  if (fn) {
+    fn();
+  }
+
+  render();
+
+  const revision = ++NET.stateRevision;
+  NET.actionPending++;
+
+  NET.actionQueue =
+    NET.actionQueue.then(async () => {
+      let requestFailed = false;
+
+      try {
+        const st = await apiPost(
+          '/api/action',
+          { action: name }
+        );
+
+        if (!st || !st.ok) {
+          throw new Error(
+            st && st.error
+              ? st.error
+              : 'Respons aksi server tidak valid'
+          );
+        }
+
+        if (revision === NET.stateRevision) {
+          applyState(st);
+          render();
+        }
 
         NET.online = true;
         NET.fail = 0;
 
-        if (st.mqttOk === false) {
+        if (st.mqttQueued === false) {
           toast(
-            'Server gagal mengirim perintah ke ESP32. Periksa log CMD.',
+            'Server gagal menjadwalkan perintah MQTT. Periksa log CMD.',
             'warn'
           );
         }
-      }
-    })
-    .catch(() => {
-      toast(
-        'Gagal mengirim perintah ke server',
-        'warn'
-      );
-    });
 
-  render();
+      } catch (error) {
+        requestFailed = true;
+        console.error(
+          '[Server] Gagal mengirim aksi:',
+          error
+        );
+        toast(
+          'Gagal mengirim perintah ke server',
+          'warn'
+        );
+
+      } finally {
+        NET.actionPending--;
+
+        if (
+          NET.actionPending === 0 &&
+          requestFailed &&
+          NET.mode === 'server'
+        ) {
+          pollServer();
+        }
+      }
+    });
 }
 
 
@@ -1658,11 +1712,7 @@ function handleMqttMessage(
 
       MQTT.espStatus =
         value;
-
-      /*
-       * Tidak mengubah S.power secara langsung.
-       * State utama tetap berasal dari server.
-       */
+      S.power = value === 'ON';
 
       updateMqttIndicator();
     }
@@ -1718,6 +1768,11 @@ function handleMqttMessage(
     ) {
       MQTT.lastTarget =
         value;
+      S.setTemp = value;
+
+      if (NET.mode === 'server') {
+        render();
+      }
     }
 
     return;
@@ -1737,6 +1792,11 @@ function handleMqttMessage(
 
     MQTT.lastMode =
       value;
+    S.mode = value;
+
+    if (NET.mode === 'server') {
+      render();
+    }
 
     return;
   }
@@ -1757,6 +1817,52 @@ function handleMqttMessage(
     }
 
     return;
+  }
+
+  if (
+    topic === MQTT_CONFIG.topics.swing ||
+    topic === MQTT_CONFIG.topics.turbo ||
+    topic === MQTT_CONFIG.topics.sleep
+  ) {
+    const value = message.toUpperCase();
+    if (!['ON', 'OFF', 'TRUE', 'FALSE', '1', '0'].includes(value)) {
+      return;
+    }
+
+    const enabled = ['ON', 'TRUE', '1'].includes(value);
+    if (topic === MQTT_CONFIG.topics.swing) {
+      S.swing = enabled;
+    } else if (topic === MQTT_CONFIG.topics.turbo) {
+      S.turbo = enabled;
+    } else {
+      S.sleep = enabled;
+    }
+
+    if (NET.mode === 'server') {
+      render();
+    }
+
+    return;
+  }
+
+  if (topic === MQTT_CONFIG.topics.timer) {
+    const minutes = Number(message);
+    const timerIndex = TIMER_STEPS.indexOf(minutes);
+    if (timerIndex >= 0) {
+      S.timerIdx = timerIndex;
+      if (NET.mode === 'server') {
+        render();
+      }
+    }
+
+    return;
+  }
+
+  if (topic === MQTT_CONFIG.topics.timerRemaining) {
+    const remaining = Number(message);
+    if (Number.isFinite(remaining) && remaining >= 0) {
+      MQTT.esp32TimerRemaining = remaining;
+    }
   }
 }
 
@@ -1847,7 +1953,12 @@ async function connectMqtt() {
           MQTT_CONFIG.topics.temperature,
           MQTT_CONFIG.topics.target,
           MQTT_CONFIG.topics.mode,
-          MQTT_CONFIG.topics.fan
+          MQTT_CONFIG.topics.fan,
+          MQTT_CONFIG.topics.swing,
+          MQTT_CONFIG.topics.turbo,
+          MQTT_CONFIG.topics.sleep,
+          MQTT_CONFIG.topics.timer,
+          MQTT_CONFIG.topics.timerRemaining
         ];
 
         MQTT.client.subscribe(
@@ -2778,6 +2889,10 @@ function resetAll(silent) {
 /* =====================================================================
  *  GRAFIK
  * ===================================================================== */
+
+const CHART_RENDER_INTERVAL_MS = 180;
+let lastChartDrawAt = 0;
+
 
 function drawChart() {
   const c =
@@ -4195,7 +4310,16 @@ function render() {
   }
 
 
-  drawChart();
+  const now =
+    performance.now();
+
+  if (
+    now - lastChartDrawAt >=
+    CHART_RENDER_INTERVAL_MS
+  ) {
+    lastChartDrawAt = now;
+    drawChart();
+  }
 }
 
 
@@ -4284,26 +4408,62 @@ const ACTIONS = {
  *  BUTTON REMOTE
  * ===================================================================== */
 
+const TAP_CLICK_SUPPRESSION_MS = 800;
+
+function bindActionButton(button, action) {
+  let suppressClick = false;
+
+  button.addEventListener(
+    'pointerup',
+    event => {
+      if (event.pointerType !== 'touch') {
+        return;
+      }
+
+      suppressClick = true;
+      setTimeout(
+        () => {
+          suppressClick = false;
+        },
+        TAP_CLICK_SUPPRESSION_MS
+      );
+
+      doAction(action);
+    }
+  );
+
+  button.addEventListener(
+    'click',
+    event => {
+      if (
+        event.detail !== 0 &&
+        suppressClick
+      ) {
+        suppressClick = false;
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        return;
+      }
+
+      doAction(action);
+    }
+  );
+}
+
+
 remoteButtons.forEach(
   btn => {
-
-    btn.addEventListener(
-      'click',
-      () => {
-
-        doAction(
-          btn.dataset.act
-        );
-      }
+    bindActionButton(
+      btn,
+      btn.dataset.act
     );
   }
 );
 
 
-el.btnPowerMain.addEventListener(
-  'click',
-  () =>
-    doAction('power')
+bindActionButton(
+  el.btnPowerMain,
+  'power'
 );
 
 
@@ -4332,10 +4492,9 @@ el.btnClearLog.addEventListener(
 );
 
 
-el.btnResetAll.addEventListener(
-  'click',
-  () =>
-    doAction('reset')
+bindActionButton(
+  el.btnResetAll,
+  'reset'
 );
 
 
@@ -4445,17 +4604,15 @@ el.inpTariff.addEventListener(
 );
 
 
-el.btnFF.addEventListener(
-  'click',
-  () =>
-    doAction('ff')
+bindActionButton(
+  el.btnFF,
+  'ff'
 );
 
 
-el.btnPause.addEventListener(
-  'click',
-  () =>
-    doAction('pause')
+bindActionButton(
+  el.btnPause,
+  'pause'
 );
 
 
@@ -4764,7 +4921,8 @@ function loop(now) {
 
     if (
       now - NET.lastPoll >= NET.pollMs &&
-      !NET.pending
+      !NET.pending &&
+      NET.actionPending === 0
     ) {
       NET.lastPoll = now;
       pollServer();
