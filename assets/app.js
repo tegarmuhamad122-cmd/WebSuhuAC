@@ -132,7 +132,7 @@ const MQTT_CONFIG = {
   host: 'h212d01c.ala.us-east-1.emqxsl.com',
   port: 8084,
 
-  username: 'tegarrm',
+  username: 'WehSuhuAC',
   password: 'persija122',
 
   topics: {
