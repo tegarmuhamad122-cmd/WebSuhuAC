@@ -107,6 +107,7 @@ const TIMER_TEXT = {
 
 const HYST = 0.35;
 const SLEEP_DELAY = 3600;
+const ESP32_TEMPERATURE_MAX_AGE_MS = 12000;
 
 
 /* =====================================================================
@@ -169,11 +170,6 @@ const MQTT = {
   error: '',
   reconnectCount: 0,
 
-  /*
-   * Status ESP32 tidak langsung menggantikan S.power.
-   * S tetap menjadi state simulasi/server.
-   * MQTT menyimpan status ESP32 secara terpisah.
-   */
   espStatus: null,
 
   initialized: false
@@ -189,6 +185,7 @@ const S = {
   setTemp: 24,
 
   esp32Temperature: null,
+  esp32TemperatureAt: 0,
   mode: 'COOL',
   fan: 'AUTO',
   swing: false,
@@ -475,7 +472,9 @@ const NET = {
 
   bannerTutup: false,
 
-  bannerAlamat: ''
+  bannerAlamat: '',
+
+  activityStarted: false
 };
 
 
@@ -490,18 +489,45 @@ function rapikanAlamat(teks) {
 
   if (!s) return '';
 
-  if (!/^https?:\/\//i.test(s)) {
+  if (!/^[a-z][a-z0-9+.-]*:\/\//i.test(s)) {
     s = 'http://' + s;
   }
 
-  s = s.replace(/\/[^/]*\.html?$/i, '');
+  s = s
+    .replace(/\/[^/]*\.html?$/i, '')
+    .replace(/\/+$/, '');
 
-  s = s.replace(/\/+$/, '');
+  try {
+    const u = new URL(s);
 
-  const tanpaSkema =
-    s.replace(/^https?:\/\//i, '');
+    const host = u.hostname.toLowerCase();
 
-  return s;
+    const isLocal =
+      host === 'localhost' ||
+      host === '127.0.0.1' ||
+      host === '::1' ||
+      host === '[::1]' ||
+      /^10\./.test(host) ||
+      /^192\.168\./.test(host) ||
+      /^172\.(1[6-9]|2\d|3[0-1])\./.test(host);
+
+    /*
+     * Hanya alamat lokal HTTP yang diberi :8080.
+     * HTTPS Tunnelto / Cloudflare TIDAK diberi :8080.
+     */
+    if (
+      isLocal &&
+      u.protocol === 'http:' &&
+      !u.port
+    ) {
+      u.port = '8080';
+    }
+
+    return u.toString().replace(/\/+$/, '');
+
+  } catch (e) {
+    return s;
+  }
 }
 
 
@@ -539,8 +565,8 @@ function kandidatServer() {
 
   const daftar = [];
 
-  const tambah = a => {
-    const r = rapikanAlamat(a);
+  const tambah = alamat => {
+    const r = rapikanAlamat(alamat);
 
     if (
       r &&
@@ -556,11 +582,65 @@ function kandidatServer() {
 
   tambah(alamatTersimpan());
 
-  tambah(NET.alamatBawaan);
 
-  if (!disajikanServer) {
-    tambah('http://127.0.0.1:8080');
-  }
+  /*
+   * ================================================================
+   * 3. SERVER LAN PC
+   * ================================================================
+   *
+   * PC sekarang menggunakan:
+   * 192.168.1.2
+   *
+   * server.py:
+   * 192.168.1.2:8080
+   */
+  tambah(
+    'http://192.168.1.2:8080'
+  );
+
+
+  /*
+   * ================================================================
+   * 4. TUNNELTO
+   * ================================================================
+   */
+  tambah(
+    'https://ac-preview.tunnelto.me'
+  );
+
+
+  /*
+   * ================================================================
+   * 5. CLOUDFLARE TUNNEL
+   * ================================================================
+   */
+  tambah(
+    'https://arrangements-robust-hunting-sophisticated.trycloudflare.com'
+  );
+
+
+  /*
+   * ================================================================
+   * 6. ALAMAT BAWAAN
+   * ================================================================
+   *
+   * Tetap dipertahankan jika nanti window.AC_SERVER
+   * digunakan dari index.html.
+   */
+  tambah(
+    NET.alamatBawaan
+  );
+
+
+  /*
+   * ================================================================
+   * 7. LOCALHOST
+   * ================================================================
+   */
+  tambah(
+    'http://127.0.0.1:8080'
+  );
+
 
   return daftar;
 }
@@ -638,6 +718,63 @@ async function apiPost(path, body) {
 }
 
 
+function kirimAktivitas(event, detail) {
+  if (
+    NET.mode !== 'server' ||
+    !NET.base
+  ) {
+    return;
+  }
+
+  const payload = Object.assign(
+    {
+      event,
+      page: location.pathname
+    },
+    detail || {}
+  );
+
+  fetch(
+    NET.base + '/api/activity',
+    {
+      method: 'POST',
+      cache: 'no-store',
+      keepalive: true,
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify(payload)
+    }
+  )
+    .then(response => {
+      if (!response.ok) {
+        throw new Error('HTTP ' + response.status);
+      }
+    })
+    .catch(error => {
+      console.warn(
+        '[Aktivitas] Gagal mengirim ke server:',
+        error
+      );
+    });
+}
+
+
+function mulaiPelacakanAktivitas() {
+  if (NET.activityStarted) {
+    return;
+  }
+
+  NET.activityStarted = true;
+  kirimAktivitas(
+    'page_view',
+    {
+      label: document.title
+    }
+  );
+}
+
+
 /* =====================================================================
  *  DETEKSI SERVER
  * ===================================================================== */
@@ -668,6 +805,15 @@ async function detectServer() {
         NET.alamatDicoba = '';
 
         applyState(st);
+        mulaiPelacakanAktivitas();
+        kirimAktivitas(
+          'connection',
+          {
+            target: 'server',
+            value: base,
+            label: 'tersambung'
+          }
+        );
 
         if (baru) {
           toast(
@@ -746,6 +892,15 @@ async function sambungKe(alamat) {
       simpanAlamat(base);
 
       applyState(st);
+      mulaiPelacakanAktivitas();
+      kirimAktivitas(
+        'connection',
+        {
+          target: 'server',
+          value: base,
+          label: 'tersambung'
+        }
+      );
 
       toast(
         'Tersambung ke ' +
@@ -786,6 +941,13 @@ async function sambungKe(alamat) {
 function applyState(st) {
   S.power = !!st.power;
 
+  if (
+    st.esp32Status === 'ON' ||
+    st.esp32Status === 'OFF'
+  ) {
+    MQTT.espStatus = st.esp32Status;
+  }
+
   if (st.setTemp != null)
     S.setTemp = st.setTemp;
 
@@ -817,8 +979,17 @@ function applyState(st) {
 
     if (Number.isFinite(tempEsp)) {
       S.esp32Temperature = tempEsp;
+      const updatedAt =
+        Number(st.esp32TemperatureUpdatedAt);
+      S.esp32TemperatureAt =
+        Number.isFinite(updatedAt) && updatedAt > 0
+          ? updatedAt * 1000
+          : 0;
     }
-  } 
+  } else {
+    S.esp32Temperature = null;
+    S.esp32TemperatureAt = 0;
+  }
 
   if (st.outdoor != null)
     S.outdoor = st.outdoor;
@@ -1068,6 +1239,13 @@ function doAction(name) {
 
         NET.online = true;
         NET.fail = 0;
+
+        if (st.mqttOk === false) {
+          toast(
+            'Server gagal mengirim perintah ke ESP32. Periksa log CMD.',
+            'warn'
+          );
+        }
       }
     })
     .catch(() => {
@@ -1512,6 +1690,8 @@ function handleMqttMessage(
 
       S.esp32Temperature =
         value;
+      S.esp32TemperatureAt =
+        Date.now();
 
       if (NET.mode === 'server') {
         render();
@@ -1568,13 +1748,13 @@ function handleMqttMessage(
     const value = 
       message.toUpperCase().trim();
 
-  if (value) {
-    S.fan = value;
+    if (value) {
+      S.fan = value;
 
-    if (NET.mode === 'server') {
-      render();
+      if (NET.mode === 'server') {
+        render();
+      }
     }
-  }
 
     return;
   }
@@ -3332,16 +3512,22 @@ function trendInfo() {
 }  
 
 function suhuRealtime() {
-  if (
-    NET.mode === 'server' &&
-    Number.isFinite(
-      S.esp32Temperature
-    )
-  ) {
+  if (suhuEsp32MasihBaru()) {
     return S.esp32Temperature;
   }
 
-  return S.room;  
+  return S.room;
+}
+
+
+function suhuEsp32MasihBaru() {
+  return (
+    NET.mode === 'server' &&
+    Number.isFinite(S.esp32Temperature) &&
+    S.esp32TemperatureAt > 0 &&
+    Date.now() - S.esp32TemperatureAt <=
+      ESP32_TEMPERATURE_MAX_AGE_MS
+  );
 }
 
 
@@ -3599,7 +3785,6 @@ function render() {
       'data-state'
     ) !== stateKind
   ) {
-
     el.roomState.setAttribute(
       'data-state',
       stateKind
@@ -4392,6 +4577,13 @@ document.addEventListener(
     if (act) {
 
       e.preventDefault();
+      kirimAktivitas(
+        'shortcut',
+        {
+          target: act,
+          label: e.key
+        }
+      );
 
       /*
        * PENTING:
@@ -4412,6 +4604,105 @@ document.addEventListener(
 
       el.btnPause.click();
     }
+  }
+);
+
+
+document.addEventListener(
+  'click',
+  event => {
+    if (!(event.target instanceof Element)) {
+      return;
+    }
+
+    const control = event.target.closest(
+      'button, a, input, select, textarea, [role="button"]'
+    );
+    if (!control) {
+      return;
+    }
+
+    const label =
+      control.getAttribute('aria-label') ||
+      control.innerText ||
+      control.closest('label')?.innerText ||
+      '';
+
+    kirimAktivitas(
+      'click',
+      {
+        target:
+          control.id ||
+          control.name ||
+          control.dataset.act ||
+          control.tagName.toLowerCase(),
+        label: label.replace(/\s+/g, ' ').trim().slice(0, 120)
+      }
+    );
+  },
+  true
+);
+
+
+document.addEventListener(
+  'change',
+  event => {
+    if (!(event.target instanceof HTMLInputElement ||
+          event.target instanceof HTMLSelectElement ||
+          event.target instanceof HTMLTextAreaElement)) {
+      return;
+    }
+
+    const control = event.target;
+    const type = control.type.toLowerCase();
+    const kirimNilai =
+      control instanceof HTMLSelectElement ||
+      ['range', 'number', 'checkbox', 'radio'].includes(type);
+
+    const label =
+      control.getAttribute('aria-label') ||
+      control.closest('label')?.innerText ||
+      control.id ||
+      control.name ||
+      control.tagName.toLowerCase();
+
+    kirimAktivitas(
+      'change',
+      {
+        target: control.id || control.name || control.tagName.toLowerCase(),
+        label: label.replace(/\s+/g, ' ').trim().slice(0, 120),
+        ...(kirimNilai
+          ? {
+              value:
+                type === 'checkbox' || type === 'radio'
+                  ? control.checked
+                  : control.value
+            }
+          : {})
+      }
+    );
+  },
+  true
+);
+
+
+document.addEventListener(
+  'visibilitychange',
+  () => {
+    kirimAktivitas(
+      'visibility',
+      {
+        value: document.visibilityState
+      }
+    );
+  }
+);
+
+
+window.addEventListener(
+  'pagehide',
+  () => {
+    kirimAktivitas('page_exit');
   }
 );
 
@@ -4475,8 +4766,8 @@ function loop(now) {
       now - NET.lastPoll >= NET.pollMs &&
       !NET.pending
     ) {
-    NET.lastPoll = now;
-    pollServer();
+      NET.lastPoll = now;
+      pollServer();
     }
 
   } else {
@@ -4625,11 +4916,11 @@ function loop(now) {
    * ALAMAT SERVER
    * --------------------------------------------------------------- */
 
-  NET.alamatBawaan =
-    rapikanAlamat(
-      window.AC_SERVER ||
-      ''
-    );
+NET.alamatBawaan =
+  rapikanAlamat(
+    window.AC_SERVER ||
+    ''
+  );
 
 
   /*
