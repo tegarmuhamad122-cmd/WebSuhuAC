@@ -107,7 +107,6 @@ const TIMER_TEXT = {
 
 const HYST = 0.35;
 const SLEEP_DELAY = 3600;
-const ESP32_TEMPERATURE_MAX_AGE_MS = 25000;
 
 
 /* =====================================================================
@@ -132,8 +131,8 @@ const MQTT_CONFIG = {
   host: 'h212d01c.ala.us-east-1.emqxsl.com',
   port: 8084,
 
-  username: 'WehSuhuAC',
-  password: 'Jakarta1928',
+  username: 'tegarrm',
+  password: 'persija122',
 
   topics: {
     control: 'ac/control',
@@ -1049,6 +1048,17 @@ function applyState(st) {
         set: h.set,
         comp: !!h.comp
       }));
+
+    const sampleSuhuTerakhir =
+      S.hist[S.hist.length - 1];
+
+    if (
+      sampleSuhuTerakhir &&
+      Number.isFinite(sampleSuhuTerakhir.room)
+    ) {
+      S.room =
+        sampleSuhuTerakhir.room;
+    }
   }
 
   NET.clients =
@@ -3626,23 +3636,8 @@ function trendInfo() {
   };
 }  
 
-function suhuRealtime() {
-  if (suhuEsp32MasihBaru()) {
-    return S.esp32Temperature;
-  }
-
+function suhuSimulasi() {
   return S.room;
-}
-
-
-function suhuEsp32MasihBaru() {
-  return (
-    NET.mode === 'server' &&
-    Number.isFinite(S.esp32Temperature) &&
-    S.esp32TemperatureAt > 0 &&
-    Date.now() - S.esp32TemperatureAt <=
-      ESP32_TEMPERATURE_MAX_AGE_MS
-  );
 }
 
 
@@ -3791,7 +3786,7 @@ function render() {
   /* angka utama */
 
   const suhuAktual =
-    suhuRealtime();
+    suhuSimulasi();
 
   el.roomTemp.textContent =
     suhuAktual.toFixed(1);
